@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("5sFUqUTjAMJARrEafMX8f4J1LagdUQ9Y8TR8HwGNHkU8");
+declare_id!("J5aV7xYd4LXFqvbHtckznAwmFerjPRNMyByX1qpK7rvG");
 
 #[program]
 pub mod solquad {
@@ -39,16 +39,20 @@ pub mod solquad {
     pub fn add_project_to_pool(ctx: Context<AddProjectToPool>) -> Result<()> {
         let escrow_account = &mut ctx.accounts.escrow_account;
         let pool_account = &mut ctx.accounts.pool_account;
-        let project_account = &ctx.accounts.project_account;
+        let project_account = &mut ctx.accounts.project_account;
 
-        pool_account.projects.push(
-            project_account.project_owner
-        );
-        pool_account.total_projects += 1;
+        // added field to determine if a project is already in a pool
+        if !project_account.in_pool {
+            pool_account.projects.push(project_account.project_owner);
+            let _ = pool_account.total_projects.saturating_add(1);
 
-        escrow_account.project_reciever_addresses.push(
-            project_account.project_owner
-        );
+            // set in_pool to true
+            project_account.in_pool = true;
+
+            escrow_account
+                .project_reciever_addresses
+                .push(project_account.project_owner);
+        }
 
         Ok(())
     }
@@ -59,12 +63,12 @@ pub mod solquad {
 
         for i in 0..pool_account.projects.len() {
             if pool_account.projects[i] == project_account.project_owner {
-                project_account.votes_count += 1;
-                project_account.voter_amount += amount;
+                let _ = project_account.votes_count.saturating_add(1);
+                let _ = project_account.voter_amount.saturating_add(amount);
             }
         }
 
-        pool_account.total_votes += 1;
+        let _ = pool_account.total_votes.saturating_add(1);
 
         Ok(())
     }
@@ -73,24 +77,33 @@ pub mod solquad {
         let escrow_account = &mut ctx.accounts.escrow_account;
         let pool_account = &mut ctx.accounts.pool_account;
         let project_account = &mut ctx.accounts.project_account;
-  
+
         for i in 0..escrow_account.project_reciever_addresses.len() {
             let distributable_amt: u64;
             let votes: u64;
+            // added a field to determine if a project has recieve distributions
+            let paid: bool;
 
             let project = pool_account.projects[i];
             if project == project_account.project_owner {
                 votes = project_account.votes_count;
+                paid = project_account.paid;
             } else {
                 votes = 0;
+                paid = false;
             }
 
-            if votes != 0 {
-                distributable_amt = (votes / pool_account.total_votes) * escrow_account.creator_deposit_amount as u64;
+            if votes != 0 && !paid {
+                // Used saturating methods to handle overflow/underflow errors
+                distributable_amt = (
+                    votes.saturating_div(pool_account.total_votes))
+                    .saturating_mul(escrow_account.creator_deposit_amount as u64);
             } else {
                 distributable_amt = 0;
             }
 
+            // change paid value
+            project_account.paid = true;
             project_account.distributed_amt = distributable_amt;
         }
 
@@ -150,6 +163,12 @@ pub struct AddProjectToPool<'info> {
     pub escrow_account: Account<'info, Escrow>,
     #[account(mut)]
     pub pool_account: Account<'info, Pool>,
+
+    #[account(
+        mut,  
+        seeds = [b"project".as_ref(), pool_account.key().as_ref(), project_owner.key().as_ref()],
+        bump
+    )]
     pub project_account: Account<'info, Project>,
     pub project_owner: Signer<'info>,
 }
@@ -185,7 +204,7 @@ pub struct Escrow {
     pub project_reciever_addresses: Vec<Pubkey>,
 }
 
-// Pool for each project 
+// Pool for each project
 #[account]
 pub struct Pool {
     pub pool_creator: Pubkey,
@@ -202,6 +221,8 @@ pub struct Project {
     pub votes_count: u64,
     pub voter_amount: u64,
     pub distributed_amt: u64,
+    pub in_pool: bool,
+    pub paid: bool,
 }
 
 // Voters voting for the project
@@ -209,5 +230,5 @@ pub struct Project {
 pub struct Voter {
     pub voter: Pubkey,
     pub voted_for: Pubkey,
-    pub token_amount: u64
+    pub token_amount: u64,
 }
