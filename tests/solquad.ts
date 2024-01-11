@@ -2,7 +2,6 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import idl from "../target/idl/solquad.json";
 import { Solquad } from "../target/idl/solquad";
-
 import { utf8 } from "@coral-xyz/anchor/dist/cjs/utils/bytes";
 import { BN } from "bn.js";
 
